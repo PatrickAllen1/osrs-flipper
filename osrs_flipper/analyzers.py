@@ -27,29 +27,41 @@ class OversoldAnalyzer:
     def analyze(
         self,
         current_price: int,
-        six_month_low: int,
-        six_month_high: int,
         prices: List[int],
+        lookback_days: int = 180,
+        six_month_low: int | None = None,
+        six_month_high: int | None = None,
     ) -> Dict[str, Any]:
         """Analyze item for oversold opportunity.
 
         Args:
             current_price: Current item price.
-            six_month_low: Lowest price in period.
-            six_month_high: Highest price in period.
-            prices: List of historical prices.
+            prices: List of historical prices (daily).
+            lookback_days: Number of days to look back for range calculation.
+            six_month_low: Deprecated - calculated from prices if not provided.
+            six_month_high: Deprecated - calculated from prices if not provided.
 
         Returns:
             Analysis result dict.
         """
-        percentile = calculate_percentile(current_price, six_month_low, six_month_high)
-        rsi = calculate_rsi(prices)
+        # Use dynamic lookback window (vectorized slice)
+        lookback_prices = prices[-lookback_days:] if len(prices) > lookback_days else prices
 
-        # Calculate upside potential
-        if current_price > 0:
-            upside_pct = ((six_month_high - current_price) / current_price) * 100
-        else:
-            upside_pct = 0
+        # Calculate range from lookback window (no loops)
+        window_low = min(lookback_prices) if lookback_prices else current_price
+        window_high = max(lookback_prices) if lookback_prices else current_price
+
+        # Support deprecated parameters for backward compatibility
+        if six_month_low is not None:
+            window_low = six_month_low
+        if six_month_high is not None:
+            window_high = six_month_high
+
+        percentile = calculate_percentile(current_price, window_low, window_high)
+        rsi = calculate_rsi(prices)  # RSI uses full history
+
+        # Calculate upside potential (vectorized division)
+        upside_pct = ((window_high - current_price) / current_price) * 100 if current_price > 0 else 0
 
         is_oversold = (
             percentile <= self.low_threshold_pct
@@ -61,8 +73,8 @@ class OversoldAnalyzer:
             "percentile": round(percentile, 1),
             "rsi": rsi,
             "upside_pct": round(upside_pct, 1),
-            "six_month_low": six_month_low,
-            "six_month_high": six_month_high,
+            "six_month_low": window_low,
+            "six_month_high": window_high,
         }
 
 
