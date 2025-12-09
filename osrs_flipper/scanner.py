@@ -20,6 +20,8 @@ class ItemScanner:
         mode: str = "all",
         limit: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        lookback_days: int = 180,
+        min_roi: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Scan for flip opportunities.
 
@@ -27,6 +29,8 @@ class ItemScanner:
             mode: "oversold", "oscillator", or "all"
             limit: Max items to scan (None for all)
             progress_callback: Optional callback(current, total) for progress updates
+            lookback_days: Days to look back for price range (default 180)
+            min_roi: Minimum tax-adjusted ROI % to include (None for no filter)
 
         Returns:
             List of opportunity dicts.
@@ -43,13 +47,26 @@ class ItemScanner:
             if progress_callback:
                 progress_callback(i + 1, total)
 
-            result = self._analyze_item(item_id, mapping, latest, volumes, mode)
+            result = self._analyze_item(item_id, mapping, latest, volumes, mode, lookback_days)
             if result:
+                # Apply min_roi filter
+                if min_roi is not None:
+                    tax_adjusted = result.get("tax_adjusted_upside_pct", 0)
+                    if tax_adjusted < min_roi:
+                        continue
                 opportunities.append(result)
 
         return opportunities
 
-    def _analyze_item(self, item_id: int, mapping: Dict, latest: Dict, volumes: Dict, mode: str) -> Optional[Dict[str, Any]]:
+    def _analyze_item(
+        self,
+        item_id: int,
+        mapping: Dict,
+        latest: Dict,
+        volumes: Dict,
+        mode: str,
+        lookback_days: int = 180,
+    ) -> Optional[Dict[str, Any]]:
         if item_id not in mapping:
             return None
 
@@ -103,9 +120,6 @@ class ItemScanner:
         if len(prices) < 30:
             return None
 
-        six_month_low = min(prices)
-        six_month_high = max(prices)
-
         result = {
             "item_id": item_id,
             "name": name,
@@ -119,7 +133,11 @@ class ItemScanner:
         }
 
         if mode in ("oversold", "all"):
-            oversold = self.oversold_analyzer.analyze(current_price, six_month_low, six_month_high, prices)
+            oversold = self.oversold_analyzer.analyze(
+                current_price=current_price,
+                prices=prices,
+                lookback_days=lookback_days,
+            )
             result["oversold"] = oversold
 
         if mode in ("oscillator", "all"):
