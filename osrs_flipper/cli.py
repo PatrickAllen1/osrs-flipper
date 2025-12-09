@@ -6,11 +6,14 @@ import click
 from .api import OSRSClient
 from .allocator import SlotAllocator
 from .backtest import SignalBacktester
+from .defaults import get_default_hold_days
 from .history import HistoryFetcher
+from .lookback import calculate_lookback_days
 from .portfolio import PRESETS, PortfolioManager
 from .scanner import ItemScanner
 from .scoring import calculate_item_score
 from .simulator import MonteCarloSimulator
+from .tax import calculate_ge_tax, is_tax_exempt, GE_TAX_RATE
 from .utils import parse_cash
 
 
@@ -69,10 +72,31 @@ def main():
     default=None,
     help="Limit items to scan (default: all ~4000)",
 )
-def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit):
+@click.option(
+    "--hold-days",
+    type=int,
+    default=None,
+    help="Expected hold period in days (default: based on strategy)",
+)
+@click.option(
+    "--min-roi",
+    type=float,
+    default=20.0,
+    help="Minimum tax-adjusted ROI % to include (default: 20)",
+)
+def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit, hold_days, min_roi):
     """Scan for flip opportunities."""
     click.echo(f"OSRS Flip Scanner - {mode.upper()} mode")
     click.echo("=" * 60)
+
+    # Calculate hold_days from strategy if not provided
+    if hold_days is None:
+        hold_days = get_default_hold_days(strategy)
+
+    # Calculate lookback window
+    lookback_days = calculate_lookback_days(hold_days)
+
+    click.echo(f"Hold time: {hold_days} days | Lookback: {lookback_days} days | Min ROI: {min_roi}%")
 
     client = OSRSClient()
     scanner = ItemScanner(client)
@@ -85,7 +109,13 @@ def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit):
             click.echo(f"  Scanning items: {current}/{total}", nl=False)
             click.echo("\r", nl=False)
 
-    opportunities = scanner.scan(mode=mode, limit=limit, progress_callback=progress)
+    opportunities = scanner.scan(
+        mode=mode,
+        limit=limit,
+        progress_callback=progress,
+        lookback_days=lookback_days,
+        min_roi=min_roi,
+    )
     click.echo()  # newline after progress
 
     click.echo(f"Found {len(opportunities)} opportunities")
@@ -460,9 +490,22 @@ def _preset_to_strategy(preset_name: str) -> str:
     default=10000,
     help="Number of Monte Carlo simulations (default: 10000)",
 )
-def deep(item_name, days, sims):
+@click.option(
+    "--entry",
+    type=str,
+    default=None,
+    help="Your entry price (e.g., '1.5m', '500k'). Analyzes existing position.",
+)
+def deep(item_name, days, sims, entry):
     """Run Monte Carlo analysis on a specific item."""
-    click.echo(f"Deep Analysis: {item_name}")
+    # Parse entry price if provided
+    entry_price = None
+    if entry:
+        entry_price = parse_cash(entry)
+        click.echo(f"Position Analysis: {item_name}")
+        click.echo(f"Entry Price: {entry_price:,} GP")
+    else:
+        click.echo(f"Deep Analysis: {item_name}")
     click.echo("=" * 60)
 
     # Initialize services
@@ -509,34 +552,125 @@ def deep(item_name, days, sims):
 
     click.echo(f"\nRunning Monte Carlo simulation ({sims:,} sims, {days} days)...")
 
-    # Run Monte Carlo simulation
+    # Run Monte Carlo simulation from current price
     simulator = MonteCarloSimulator(df["mid_price"], start_price=current_price)
     results = simulator.run(n_sims=sims, n_days=days)
+
+    # Tax setup
+    tax_exempt = is_tax_exempt(item_name)
+    tax_mult = 1.0 if tax_exempt else (1 - GE_TAX_RATE)
 
     # Display results
     click.echo(f"\n{'Item Information':}")
     click.echo(f"  Name:          {item_name}")
     click.echo(f"  Current Price: {current_price:,} GP")
+
+    # Show position info if entry price provided
+    if entry_price:
+        unrealized_pnl = current_price - entry_price
+        unrealized_pct = (unrealized_pnl / entry_price) * 100
+        # If sold now, what would the after-tax P&L be?
+        tax_if_sold_now = calculate_ge_tax(current_price, item_name)
+        realized_pnl_now = current_price - tax_if_sold_now - entry_price
+        realized_pct_now = (realized_pnl_now / entry_price) * 100
+
+        click.echo(f"\n{'Your Position':}")
+        click.echo(f"  Entry Price:   {entry_price:,} GP")
+        click.echo(f"  Unrealized:    {unrealized_pnl:+,} GP ({unrealized_pct:+.1f}%)")
+        click.echo(f"  If Sold Now:   {realized_pnl_now:+,} GP ({realized_pct_now:+.1f}%) after tax")
+
     click.echo(f"\n{'6-Month Price Range':}")
     click.echo(f"  Low:           {price_low:,} GP")
     click.echo(f"  High:          {price_high:,} GP")
     click.echo(f"\n{'Detected Regime':}")
     click.echo(f"  {results['regime']}")
-    click.echo(f"\n{'Probability Analysis':}")
-    click.echo(f"  Profit:        {results['prob_profit'] * 100:.1f}%")
-    click.echo(f"  Loss:          {results['prob_loss'] * 100:.1f}%")
+
+    # Probability analysis - recalculate based on entry price if provided
+    if entry_price:
+        # Recalculate probabilities based on entry price, not current price
+        # We need to determine what % of simulated outcomes are profitable vs entry
+        # The simulation gives us price outcomes, we convert to P&L vs entry
+        click.echo(f"\n{'Probability Analysis (vs your entry)':}")
+
+        # Calculate breakeven sell price (entry + tax)
+        # breakeven: sell * tax_mult = entry → sell = entry / tax_mult
+        breakeven_sell = int(entry_price / tax_mult)
+        click.echo(f"  Breakeven:     {breakeven_sell:,} GP (to recover entry after tax)")
+
+        # For each percentile outcome, calculate profit vs entry
+        for pct_key in ['5', '25', '50', '75', '95']:
+            sim_price = results['percentiles'][pct_key]
+            tax_at_price = calculate_ge_tax(sim_price, item_name)
+            net_vs_entry = sim_price - tax_at_price - entry_price
+            roi_vs_entry = (net_vs_entry / entry_price) * 100
+            results['roi_percentiles'][pct_key] = round(roi_vs_entry, 2)
+
+        # Estimate profit probability vs entry
+        # Approximate: if median outcome > breakeven, more likely profit
+        median_outcome = results['percentiles']['50']
+        if median_outcome >= breakeven_sell:
+            # Rough interpolation
+            p25 = results['percentiles']['25']
+            if p25 >= breakeven_sell:
+                est_prob_profit = 0.75 + 0.25 * (median_outcome - breakeven_sell) / max(1, median_outcome - p25)
+            else:
+                est_prob_profit = 0.50 + 0.25 * (median_outcome - breakeven_sell) / max(1, median_outcome - p25)
+        else:
+            p75 = results['percentiles']['75']
+            if p75 >= breakeven_sell:
+                est_prob_profit = 0.25 + 0.25 * (p75 - breakeven_sell) / max(1, p75 - median_outcome)
+            else:
+                est_prob_profit = 0.25 * (results['percentiles']['95'] - breakeven_sell) / max(1, results['percentiles']['95'] - p75)
+        est_prob_profit = max(0, min(1, est_prob_profit))
+
+        click.echo(f"  Profit:        ~{est_prob_profit * 100:.0f}% (estimated vs entry)")
+        click.echo(f"  Loss:          ~{(1 - est_prob_profit) * 100:.0f}%")
+    else:
+        click.echo(f"\n{'Probability Analysis':}")
+        click.echo(f"  Profit:        {results['prob_profit'] * 100:.1f}%")
+        click.echo(f"  Loss:          {results['prob_loss'] * 100:.1f}%")
+
     click.echo(f"\n{'Price Outcomes (GP)':}")
     click.echo(f"  5th %ile:      {results['percentiles']['5']:,} GP")
     click.echo(f"  25th %ile:     {results['percentiles']['25']:,} GP")
     click.echo(f"  50th %ile:     {results['percentiles']['50']:,} GP (median)")
     click.echo(f"  75th %ile:     {results['percentiles']['75']:,} GP")
     click.echo(f"  95th %ile:     {results['percentiles']['95']:,} GP")
-    click.echo(f"\n{'ROI Outcomes':}")
+
+    # ROI section header depends on whether we have entry price
+    if entry_price:
+        click.echo(f"\n{'ROI vs Entry (after tax)':}")
+    else:
+        click.echo(f"\n{'ROI Outcomes':}")
     click.echo(f"  5th %ile:      {results['roi_percentiles']['5']:.1f}%")
     click.echo(f"  25th %ile:     {results['roi_percentiles']['25']:.1f}%")
     click.echo(f"  50th %ile:     {results['roi_percentiles']['50']:.1f}% (median)")
     click.echo(f"  75th %ile:     {results['roi_percentiles']['75']:.1f}%")
     click.echo(f"  95th %ile:     {results['roi_percentiles']['95']:.1f}%")
+
+    # Sell targets - use entry price as cost basis if provided
+    cost_basis = entry_price if entry_price else current_price
+    click.echo(f"\n{'Sell Targets (after 2% GE tax)':}")
+    if tax_exempt:
+        click.echo(f"  Note: {item_name} is TAX EXEMPT")
+
+    for pct_label, roi in [
+        ("5th %ile", results['roi_percentiles']['5']),
+        ("25th %ile", results['roi_percentiles']['25']),
+        ("50th %ile", results['roi_percentiles']['50']),
+        ("75th %ile", results['roi_percentiles']['75']),
+        ("95th %ile", results['roi_percentiles']['95']),
+    ]:
+        # sell = cost_basis * (1 + ROI) / tax_mult
+        target_roi_decimal = roi / 100
+        sell_price = int(cost_basis * (1 + target_roi_decimal) / tax_mult)
+        tax_amount = calculate_ge_tax(sell_price, item_name)
+        net_profit = sell_price - tax_amount - cost_basis
+        suffix = " (median)" if "50th" in pct_label else ""
+        click.echo(
+            f"  {pct_label}:      {sell_price:,} GP "
+            f"(tax: {tax_amount:,}, net: {net_profit:+,}){suffix}"
+        )
 
 
 @main.command()
