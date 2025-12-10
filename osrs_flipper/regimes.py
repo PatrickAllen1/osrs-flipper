@@ -101,7 +101,7 @@ class RegimeClassifier:
                 "volatility_multiplier": 1.0,
             },
             Regime.MEAN_REVERTING: {
-                "mean_reversion_strength": 0.1,
+                "mean_reversion_strength": 0.02,  # Weak strength with rolling mean (not full history)
                 "momentum_factor": 0.0,
                 "volatility_multiplier": 1.0,
             },

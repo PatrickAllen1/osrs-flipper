@@ -242,7 +242,10 @@ class MonteCarloSimulator:
         self.prices = prices
         self.start_price = start_price or int(prices.iloc[-1])
         self.returns = calculate_returns(prices).dropna().values
-        self.historical_mean = float(prices.mean())
+        # Use 60-day rolling mean to avoid bias from old prices
+        # For declining items, the rolling mean also declines
+        rolling_window = min(60, len(prices))
+        self.historical_mean = float(prices.tail(rolling_window).mean())
 
         # Detect regime and get params
         self.classifier = RegimeClassifier()
