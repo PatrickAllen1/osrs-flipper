@@ -109,3 +109,48 @@ class TestOpportunitiesEndpoint:
             min_roi=25.5,
             limit=50
         )
+
+
+class TestAnalyzeEndpoint:
+    """Test /api/analyze/{item_id} endpoint."""
+
+    @patch('osrs_flipper.server.api.analyze_single_item')
+    def test_analyze_endpoint_returns_item_analysis(self, mock_analyze):
+        """GET /api/analyze/{item_id} returns deep analysis."""
+        from osrs_flipper.server.api import app
+
+        mock_analyze.return_value = {
+            "item_id": 123,
+            "name": "Test Item",
+            "instabuy": 100,
+            "instasell": 110,
+            "bsr": 1.5,
+            "instant": {"instant_roi_after_tax": 10.5, "spread_pct": 10.0},
+            "convergence": {"upside_pct": 20.0, "is_convergence": True}
+        }
+
+        client = TestClient(app)
+        response = client.get("/api/analyze/123")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["item_id"] == 123
+        assert data["name"] == "Test Item"
+        assert "instant" in data
+        assert "convergence" in data
+
+        mock_analyze.assert_called_once_with(123)
+
+    @patch('osrs_flipper.server.api.analyze_single_item')
+    def test_analyze_endpoint_returns_404_for_invalid_item(self, mock_analyze):
+        """GET /api/analyze/{item_id} returns 404 for invalid item."""
+        from osrs_flipper.server.api import app
+
+        mock_analyze.side_effect = ValueError("Item 999 not found in mapping")
+
+        client = TestClient(app)
+        response = client.get("/api/analyze/999")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"].lower()
