@@ -1665,14 +1665,52 @@ Flow: fetch data → instant analyzer → convergence → oversold (optional)"
 **Agent Task Completion Log:**
 ```
 TASK: Single item analysis endpoint
-FILES CREATED: osrs_flipper/item_analyzer.py (150 LOC), tests/test_item_analyzer.py (90 LOC)
-FILES MODIFIED: osrs_flipper/server.py (+20 LOC), tests/test_server.py (+25 LOC)
-DATA FLOW IN: item_id (int)
-DATA FLOW OUT: {item_id, name, instabuy, instasell, bsr, instant: {...}, convergence: {...}, oversold: {...}}
-ENDPOINTS: GET /api/analyze/{item_id}
-TESTS: 2 new analyzer tests, 1 new endpoint test - all passing
-DEPENDENCIES: InstantSpreadAnalyzer, ConvergenceAnalyzer, OversoldAnalyzer, fetch_timeframe_highs
-NEXT TASK NEEDS: Portfolio allocation endpoint
+STATUS: ✅ COMPLETED (2025-12-09)
+TDD METHODOLOGY: Full RED → GREEN → REFACTOR cycle
+  - RED: Wrote 2 failing tests first ✓
+  - GREEN: Implemented item_analyzer.py, all tests pass ✓
+  - REFACTOR: Code is clean and well-documented ✓
+FILES CREATED:
+  - osrs_flipper/server/item_analyzer.py (190 LOC production)
+  - tests/server/test_item_analyzer.py (105 LOC tests)
+FILES MODIFIED:
+  - osrs_flipper/server/api.py (+39 LOC - added /api/analyze/{item_id} endpoint)
+  - tests/server/test_api.py (+46 LOC - 2 new endpoint tests)
+TOTAL LOC: 380 lines added (229 production, 151 test)
+DATA FLOW IN: item_id (int from URL path)
+DATA FLOW OUT: {
+  item_id: int,
+  name: str,
+  instabuy: int,
+  instasell: int,
+  instabuy_vol: int,
+  instasell_vol: int,
+  bsr: float,
+  instant: {spread_pct, bsr, is_instant_opportunity, instant_roi_after_tax, reject_reason},
+  convergence: {is_convergence, distance_from_*_high, target_price, upside_pct, convergence_strength, reject_reason},
+  oversold: {is_oversold, percentile, rsi, upside_pct, six_month_low, six_month_high} [optional]
+}
+ENDPOINTS: GET /api/analyze/{item_id} (returns 200 with analysis, 404 if item not found)
+IMPLEMENTATION DETAILS:
+  - analyze_single_item() fetches mapping, latest, volumes, timeseries from OSRSClient
+  - Runs InstantSpreadAnalyzer for spread + BSR analysis
+  - Runs ConvergenceAnalyzer with timeframe highs (1d/1w/1m)
+  - Runs OversoldAnalyzer if sufficient historical data (30+ days)
+  - Handles missing data gracefully (convergence falls back, oversold excluded if insufficient data)
+  - HTTPException 404 for invalid item_id or missing price data
+TESTS: 4 new comprehensive tests - ALL PASSING
+  1. test_analyze_item_with_all_data - full analysis with all modes
+  2. test_analyze_item_without_history - instant only with no historical data
+  3. test_analyze_endpoint_returns_item_analysis - endpoint success case
+  4. test_analyze_endpoint_returns_404_for_invalid_item - error handling
+TEST RESULTS:
+  - All 4 new tests passing
+  - All 223 total tests passing (no regressions)
+  - Full test suite: 11.04s
+COMMIT: 8c8c743 "feat: add single item analysis endpoint (Task 5)"
+DEPENDENCIES: OSRSClient, InstantSpreadAnalyzer, ConvergenceAnalyzer, OversoldAnalyzer, fetch_timeframe_highs, calculate_bsr
+ISSUES ENCOUNTERED: None - smooth implementation following TDD
+NEXT TASK NEEDS: Portfolio allocation endpoint (Task 6)
 ```
 
 ---
