@@ -3,6 +3,8 @@ import logging
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from ..allocator import SlotAllocator
+from ..utils import parse_cash
 from .scanner_service import ScannerService
 from .item_analyzer import analyze_single_item
 
@@ -160,3 +162,81 @@ async def analyze_item(item_id: int):
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/portfolio/allocate")
+async def allocate_portfolio(
+    cash: str = Query(..., description="Cash in GP (supports 100m, 1.5b, etc)"),
+    slots: int = Query(default=8, ge=1, le=8, description="Available GE slots (1-8)"),
+    strategy: str = Query(default="balanced", pattern="^(flip|hold|balanced)$", description="Allocation strategy"),
+    rotations: int = Query(default=3, ge=1, description="Buy limit rotations")
+):
+    """Calculate portfolio allocation.
+
+    Args:
+        cash: Cash stack in GP (supports suffixes: 100m, 1.5b)
+        slots: Available GE slots (1-8)
+        strategy: Allocation strategy (flip/hold/balanced)
+        rotations: Buy limit rotations
+
+    Returns:
+        Allocation plan with expected profit
+
+    Data Flow:
+        IN: cash, slots, strategy, rotations (query params)
+        PARSE: parse_cash(cash) → cash_int
+        FETCH: service.scan() → opportunities
+        PROCESS: SlotAllocator(strategy).allocate(opportunities, cash_int, slots, rotations)
+        OUT: {
+            allocation: List[{slot, name, buy_price, quantity, capital, ...}],
+            total_capital: int,
+            expected_profit: int,
+            strategy: str
+        }
+    """
+    service = get_scanner_service()
+
+    # Parse cash amount
+    try:
+        cash_int = parse_cash(cash)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Get cached opportunities
+    opportunities = service.scan(
+        mode="all",
+        min_roi=10.0,
+        limit=100
+    )
+
+    if not opportunities:
+        return {
+            "allocation": [],
+            "total_capital": 0,
+            "expected_profit": 0,
+            "strategy": strategy,
+            "message": "No opportunities available"
+        }
+
+    # Calculate allocation
+    allocator = SlotAllocator(strategy=strategy)
+    allocation = allocator.allocate(
+        opportunities=opportunities,
+        cash=cash_int,
+        slots=slots,
+        rotations=rotations
+    )
+
+    # Calculate totals
+    total_capital = sum(slot["capital"] for slot in allocation)
+    expected_profit = sum(
+        slot["capital"] * (slot.get("target_roi_pct", 0) / 100)
+        for slot in allocation
+    )
+
+    return {
+        "allocation": allocation,
+        "total_capital": total_capital,
+        "expected_profit": int(expected_profit),
+        "strategy": strategy
+    }

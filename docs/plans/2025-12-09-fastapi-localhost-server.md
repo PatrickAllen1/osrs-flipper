@@ -1881,14 +1881,27 @@ Flow: get cached opps → allocator.allocate() → totals"
 
 **Agent Task Completion Log:**
 ```
-TASK: Portfolio allocation endpoint
-FILES MODIFIED: osrs_flipper/server.py (+50 LOC), tests/test_server.py (+35 LOC)
-DATA FLOW IN: cash (int), slots (int), strategy (str), rotations (int) via query params
-DATA FLOW OUT: {allocation: List[Dict], total_capital: int, expected_profit: int}
+TASK: Portfolio allocation endpoint ✅ COMPLETED
+FILES MODIFIED:
+  - osrs_flipper/server/api.py (+78 LOC: 2 import lines, 76 endpoint lines)
+  - tests/server/test_api.py (+131 LOC: 6 test methods in TestPortfolioAllocationEndpoint class)
+DATA FLOW IN: cash (str with suffix support: "100m", "1.5b"), slots (int 1-8), strategy (str: flip/hold/balanced), rotations (int)
+DATA FLOW OUT: {allocation: List[Dict], total_capital: int, expected_profit: int, strategy: str, message?: str}
 ENDPOINTS: GET /api/portfolio/allocate
-TESTS: 1 new test (allocation endpoint) - all 5 server tests passing
-DEPENDENCIES: SlotAllocator, ScannerService
-NEXT TASK NEEDS: Server CLI command to start server easily
+TESTS: 6 new tests - all 12 API tests passing, all 229 project tests passing
+TEST COVERAGE:
+  - test_portfolio_allocation_endpoint: Basic allocation with mocked allocator
+  - test_portfolio_allocation_with_cash_suffix: Cash parsing with m/b suffixes
+  - test_portfolio_allocation_no_opportunities: Empty opportunities handling
+  - test_portfolio_allocation_uses_default_params: Default values (slots=8, strategy=balanced, rotations=3)
+  - test_portfolio_allocation_validates_slots: Validation (1-8 range)
+  - test_portfolio_allocation_validates_strategy: Strategy validation (flip/hold/balanced)
+DEPENDENCIES: SlotAllocator (from osrs_flipper.allocator), parse_cash (from osrs_flipper.utils), ScannerService
+TDD METHODOLOGY: Followed strict RED-GREEN-REFACTOR
+  - RED: Wrote 6 failing tests first
+  - GREEN: Implemented endpoint with imports, all tests passing
+  - REFACTOR: Code clean, no refactoring needed
+NEXT TASK NEEDS: Server CLI command to start FastAPI server with uvicorn
 ```
 
 ---
