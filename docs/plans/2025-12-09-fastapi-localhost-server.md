@@ -2395,19 +2395,42 @@ Coverage: All 4 endpoints, both scan modes, filtering logic"
 
 **Agent Task Completion Log:**
 ```
-TASK: E2E API integration tests
-FILES CREATED: tests/test_e2e_api.py (280 LOC)
-TESTS: 6 comprehensive E2E tests
+TASK: E2E API integration tests - COMPLETED ✓
+FILES CREATED: tests/server/test_e2e_api.py (498 LOC)
+TESTS: 11 comprehensive E2E tests covering all endpoints and data flows
 DATA FLOW TESTED:
-  - GET /api/health → status check
-  - GET /api/opportunities → instant mode → InstantSpreadAnalyzer → JSON response
-  - GET /api/opportunities → convergence mode → ConvergenceAnalyzer → JSON response
-  - GET /api/analyze/{item_id} → all analyzers → full analysis
-  - GET /api/portfolio/allocate → SlotAllocator → allocation plan
-  - min_roi filter → ScannerService filtering → filtered results
-ALL TESTS PASSING: 21 new tests (6 E2E + 15 from previous tasks)
-VERIFICATION: Full data integrity from HTTP request to JSON response
-DEPENDENCIES: FastAPI TestClient, responses library for mocking
+  1. GET /api/health → status check → cache metadata
+  2. GET /api/opportunities?mode=instant → ScannerService → InstantSpreadAnalyzer → JSON response
+  3. GET /api/opportunities?mode=convergence → ScannerService → ConvergenceAnalyzer → JSON response
+  4. GET /api/opportunities?mode=both → Both analyzers → Combined results
+  5. GET /api/analyze/{item_id} → OSRSClient → All analyzers → Full analysis
+  6. GET /api/analyze/{invalid_id} → 404 error handling
+  7. GET /api/portfolio/allocate → ScannerService → SlotAllocator → Allocation plan
+  8. Cash parsing (100m, 1.5b) → parse_cash → int conversion → allocation
+  9. min_roi filter → ScannerService filtering → Filtered results verification
+  10. limit parameter → Data limiting → Correct output size
+  11. Cache functionality → Multiple requests → Cache hit verification
+
+ALL TESTS PASSING: 240 total (11 new E2E + 229 existing)
+VERIFICATION: Full data integrity from HTTP request through all layers to JSON response
+  - INPUT validation (query params, path params)
+  - TRANSFORM integrity (scanner → analyzers → formatters)
+  - OUTPUT verification (JSON structure, data types, business logic)
+
+TEST COVERAGE:
+  - Health endpoint: Structure and metadata ✓
+  - Opportunities endpoint: All modes (instant/convergence/both), filtering, limits ✓
+  - Analyze endpoint: Valid items, invalid items (404), all analysis types ✓
+  - Portfolio endpoint: Allocation, cash parsing, validation ✓
+  - Error cases: 404s, validation errors ✓
+  - Performance: Cache hit/miss behavior ✓
+
+ISSUES ENCOUNTERED:
+  - Initial test had wrong field name (upside_pct always present vs. only when is_convergence=True)
+  - Fixed by making assertion conditional on convergence status
+
+DEPENDENCIES: FastAPI TestClient, responses library (already in requirements.txt)
+PYTEST RESULTS: 240 passed, 3 warnings in 12.87s
 ```
 
 ---
