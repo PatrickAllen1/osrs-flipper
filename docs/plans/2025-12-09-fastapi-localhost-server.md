@@ -2060,14 +2060,27 @@ Command: serve --port 8000 --reload"
 
 **Agent Task Completion Log:**
 ```
-TASK: Server CLI command
-FILES MODIFIED: osrs_flipper/cli.py (+50 LOC), README.md (+20 LOC)
-DATA FLOW: CLI invoke → uvicorn.run("osrs_flipper.server:app", host, port, reload)
+TASK: Server CLI command - COMPLETED ✓
+FILES MODIFIED: osrs_flipper/cli.py (+54 LOC)
+DATA FLOW: CLI invoke → uvicorn.run("osrs_flipper.server.api:app", host, port, reload)
 COMMAND: python3 -m osrs_flipper.cli serve [--host HOST] [--port PORT] [--reload]
 ENDPOINTS DISPLAYED: health, opportunities, analyze, portfolio, docs
-TESTING: Manual CLI testing (started server, curl health endpoint)
-DEPENDENCIES: uvicorn (added to requirements)
-NEXT TASK NEEDS: E2E integration tests
+TESTING: Manual testing completed successfully
+  - Test 1: Command help output - PASS ✓
+  - Test 2: Health endpoint (http://127.0.0.1:8002/api/health) - PASS ✓
+    Response: {"status": "ok", "last_scan_time": 0.0, "cache_age_seconds": 0.0}
+  - Test 3: Opportunities endpoint with filters - PASS ✓
+    Response: Status 200, returned opportunities list
+  - Test 4: OpenAPI docs (http://127.0.0.1:8002/docs) - PASS ✓
+    Response: Status 200, interactive documentation loaded
+ISSUES ENCOUNTERED: None
+DEPENDENCIES: uvicorn (already in requirements.txt)
+NOTES:
+  - Server starts successfully on custom ports
+  - All endpoints respond correctly
+  - Graceful shutdown with Ctrl+C works
+  - --reload flag enables auto-reload for development
+NEXT TASK NEEDS: E2E integration tests (Task 8)
 ```
 
 ---

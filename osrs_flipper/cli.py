@@ -859,5 +859,60 @@ def backtest(item_name, train_days, test_days, hold_days, percentile):
             )
 
 
+@main.command()
+@click.option(
+    "--host",
+    type=str,
+    default="127.0.0.1",
+    help="Bind host (default: 127.0.0.1)",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8000,
+    help="Port to listen on (default: 8000)",
+)
+@click.option(
+    "--reload",
+    is_flag=True,
+    help="Enable auto-reload on code changes (development)",
+)
+def serve(host, port, reload):
+    """Start FastAPI server for RuneLite plugin integration.
+
+    Runs localhost API server with auto-scanning background thread.
+    Plugin can connect to http://localhost:8000/api endpoints.
+
+    Data Flow:
+        CLI command -> uvicorn.run(app) -> FastAPI server
+        Background thread -> auto-scan every 5 min
+    """
+    click.echo(f"Starting OSRS Flipper API server on {host}:{port}")
+    click.echo("=" * 60)
+    click.echo("\nEndpoints:")
+    click.echo(f"  Health:        http://{host}:{port}/api/health")
+    click.echo(f"  Opportunities: http://{host}:{port}/api/opportunities")
+    click.echo(f"  Analyze:       http://{host}:{port}/api/analyze/{{item_id}}")
+    click.echo(f"  Portfolio:     http://{host}:{port}/api/portfolio/allocate")
+    click.echo(f"\nDocs:          http://{host}:{port}/docs")
+    click.echo("\nPress Ctrl+C to stop\n")
+
+    try:
+        import uvicorn
+        uvicorn.run(
+            "osrs_flipper.server.api:app",
+            host=host,
+            port=port,
+            reload=reload,
+            log_level="info"
+        )
+    except ImportError:
+        click.echo("Error: uvicorn not installed", err=True)
+        click.echo("Install with: pip install uvicorn", err=True)
+        raise click.Abort()
+    except KeyboardInterrupt:
+        click.echo("\n\nServer stopped")
+
+
 if __name__ == "__main__":
     main()
