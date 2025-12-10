@@ -131,15 +131,22 @@ def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit, hold
         click.echo("No opportunities found matching criteria.")
         return
 
-    # Add scores
+    # Add scores based on mode
     for opp in opportunities:
-        oversold = opp.get("oversold", {})
-        opp["score"] = calculate_item_score(
-            upside_pct=oversold.get("upside_pct", 0),
-            percentile=oversold.get("percentile", 50),
-            volume_ratio=1.0,
-            bounce_rate=0.5,
-        )
+        if "instant" in opp or "convergence" in opp:
+            # New modes: score by best ROI
+            instant_roi = opp.get("instant", {}).get("instant_roi_after_tax", 0)
+            conv_upside = opp.get("convergence", {}).get("upside_pct", 0)
+            opp["score"] = max(instant_roi, conv_upside)
+        else:
+            # Legacy mode: use old scoring
+            oversold = opp.get("oversold", {})
+            opp["score"] = calculate_item_score(
+                upside_pct=oversold.get("upside_pct", 0),
+                percentile=oversold.get("percentile", 50),
+                volume_ratio=1.0,
+                bounce_rate=0.5,
+            )
 
     # Sort by score
     opportunities.sort(key=lambda x: x["score"], reverse=True)
@@ -169,22 +176,95 @@ def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit, hold
 
 def _print_opportunities(opportunities):
     """Print opportunity list."""
-    click.echo(f"\n{'Item':<30} {'Price':>10} {'%ile':>6} {'RSI':>5} {'Upside':>8} {'Score':>6}")
-    click.echo("-" * 70)
+    if not opportunities:
+        return
 
-    for opp in opportunities:
-        oversold = opp.get("oversold", {})
-        rsi = oversold.get("rsi")
-        rsi_str = f"{rsi:.0f}" if rsi else "N/A"
+    # Detect mode based on first opportunity
+    first = opportunities[0]
+    has_instant = "instant" in first
+    has_convergence = "convergence" in first
+    has_oversold = "oversold" in first
 
-        click.echo(
-            f"{opp['name']:<30} "
-            f"{opp['current_price']:>10,} "
-            f"{oversold.get('percentile', 0):>5.1f}% "
-            f"{rsi_str:>5} "
-            f"{oversold.get('upside_pct', 0):>7.1f}% "
-            f"{opp.get('score', 0):>6.1f}"
-        )
+    if has_instant and has_convergence:
+        # Both mode
+        click.echo(f"\n{'Item':<25} {'Buy':>8} {'Sell':>8} {'Spread%':>7} {'BSR':>5} {'Conv%':>6} {'ROI%':>6}")
+        click.echo("-" * 75)
+
+        for opp in opportunities:
+            instant = opp.get("instant", {})
+            conv = opp.get("convergence", {})
+
+            # Show best ROI from either strategy
+            instant_roi = instant.get("instant_roi_after_tax", 0)
+            conv_upside = conv.get("upside_pct", 0)
+            best_roi = max(instant_roi, conv_upside)
+
+            click.echo(
+                f"{opp['name'][:24]:<25} "
+                f"{opp.get('instabuy', 0):>8,} "
+                f"{opp.get('instasell', 0):>8,} "
+                f"{instant.get('spread_pct', 0):>6.1f}% "
+                f"{instant.get('bsr', 0):>5.2f} "
+                f"{conv_upside:>5.1f}% "
+                f"{best_roi:>5.1f}%"
+            )
+
+    elif has_instant:
+        # Instant mode
+        click.echo(f"\n{'Item':<28} {'Buy':>9} {'Sell':>9} {'Spread%':>8} {'BSR':>5} {'ROI%':>6}")
+        click.echo("-" * 75)
+
+        for opp in opportunities:
+            instant = opp.get("instant", {})
+
+            click.echo(
+                f"{opp['name'][:27]:<28} "
+                f"{opp.get('instabuy', 0):>9,} "
+                f"{opp.get('instasell', 0):>9,} "
+                f"{instant.get('spread_pct', 0):>7.1f}% "
+                f"{instant.get('bsr', 0):>5.2f} "
+                f"{instant.get('instant_roi_after_tax', 0):>5.1f}%"
+            )
+
+    elif has_convergence:
+        # Convergence mode
+        click.echo(f"\n{'Item':<24} {'Buy':>8} {'1d%':>5} {'1w%':>5} {'1m%':>5} {'Target':>9} {'Up%':>6}")
+        click.echo("-" * 75)
+
+        for opp in opportunities:
+            conv = opp.get("convergence", {})
+
+            click.echo(
+                f"{opp['name'][:23]:<24} "
+                f"{opp.get('instabuy', 0):>8,} "
+                f"{conv.get('distance_from_1d_high', 0):>4.0f}% "
+                f"{conv.get('distance_from_1w_high', 0):>4.0f}% "
+                f"{conv.get('distance_from_1m_high', 0):>4.0f}% "
+                f"{conv.get('target_price', 0):>9,} "
+                f"{conv.get('upside_pct', 0):>5.1f}%"
+            )
+
+    elif has_oversold:
+        # Legacy mode
+        click.echo(f"\n{'Item':<30} {'Price':>10} {'%ile':>6} {'RSI':>5} {'Upside':>8} {'Score':>6}")
+        click.echo("-" * 70)
+
+        for opp in opportunities:
+            oversold = opp.get("oversold", {})
+            rsi = oversold.get("rsi")
+            rsi_str = f"{rsi:.0f}" if rsi else "N/A"
+
+            current_price = opp.get('current_price')
+            price_str = f"{current_price:>10,}" if isinstance(current_price, (int, float)) else f"{current_price or 'N/A':>10}"
+
+            click.echo(
+                f"{opp['name']:<30} "
+                f"{price_str} "
+                f"{oversold.get('percentile', 0):>5.1f}% "
+                f"{rsi_str:>5} "
+                f"{oversold.get('upside_pct', 0):>7.1f}% "
+                f"{opp.get('score', 0):>6.1f}"
+            )
 
 
 def _momentum_arrow(momentum: float) -> str:

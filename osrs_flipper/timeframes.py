@@ -59,6 +59,11 @@ def fetch_timeframe_highs(
     one_week_high = np.max(highs[-168:]) if n >= 1 else 0
     one_month_high = np.max(highs) if n >= 1 else 0
 
+    # Handle NaN values (can occur if timeseries has no valid data)
+    one_day_high = 0 if np.isnan(one_day_high) else one_day_high
+    one_week_high = 0 if np.isnan(one_week_high) else one_week_high
+    one_month_high = 0 if np.isnan(one_month_high) else one_month_high
+
     result = {
         "1d_high": int(one_day_high),
         "1w_high": int(one_week_high),
