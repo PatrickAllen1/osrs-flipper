@@ -1259,15 +1259,42 @@ Logic: mode check → ROI threshold → limit"
 **Agent Task Completion Log:**
 ```
 TASK: Opportunities endpoint filtering
-FILES MODIFIED: osrs_flipper/scanner_service.py (+60 LOC), tests/test_scanner_service.py (+55 LOC)
+STATUS: ✅ COMPLETED (2025-12-09)
+TDD METHODOLOGY: Full RED → GREEN → REFACTOR cycle
+  - RED: Wrote 5 failing tests first ✓
+  - GREEN: Implemented filtering logic, all tests pass ✓
+  - REFACTOR: Code is clean and well-documented ✓
+FILES MODIFIED:
+  - osrs_flipper/server/scanner_service.py (+93 LOC - 3 new methods)
+  - tests/server/test_scanner_service.py (+153 LOC - 5 new tests, 1 test fix)
+TOTAL LOC: 246 lines added (93 production, 153 test)
 DATA FLOW IN: cached_opportunities (List[Dict]), mode (str), min_roi (float), limit (int)
 DATA FLOW OUT: filtered opportunities (List[Dict])
 FILTERING LOGIC:
-  - Mode: check for instant/convergence/oversold keys
-  - ROI: max(instant_roi, conv_upside, legacy_upside) >= min_roi
-TESTS: 2 new tests (mode filter, ROI filter) - all 8 tests passing
-DEPENDENCIES: None (pure filtering logic)
-NEXT TASK NEEDS: Additional endpoints can use same service
+  - Mode filter: _matches_mode() checks for instant/convergence/both/oversold/oscillator/all keys
+  - ROI filter: _meets_min_roi() using max(instant_roi, conv_upside, legacy_upside) >= min_roi
+  - Limit: respects limit parameter by breaking early
+IMPLEMENTATION DETAILS:
+  - Modified scan() to call _filter_cached() on cache hits instead of returning raw cache
+  - _filter_cached() iterates through cache and applies mode + ROI filters
+  - _matches_mode() handles all 6 mode types with key presence checks
+  - _meets_min_roi() extracts best ROI from multiple possible fields
+  - Fixed existing test to include proper mode keys in mock data
+TESTS: 5 new comprehensive tests
+  1. test_filter_by_mode_instant - filters to only instant opportunities
+  2. test_filter_by_mode_convergence - filters to only convergence opportunities
+  3. test_filter_by_min_roi - filters out items below ROI threshold
+  4. test_filter_by_mode_and_min_roi - combines both filters
+  5. test_filter_respects_limit - ensures limit is honored
+TEST RESULTS:
+  - All 11 scanner_service tests passing (6 existing + 5 new)
+  - All 219 total tests passing (no regressions)
+  - Full test suite: 9.46s
+COMMIT: dde3d0b "feat: add client-side filtering for cached opportunities"
+ISSUES ENCOUNTERED:
+  - Initial test failure: existing test used mock data without mode keys
+  - Fix: Updated mock data to include "instant" key for mode matching
+NEXT TASK NEEDS: Filtering is ready for use by API endpoints
 ```
 
 ---
