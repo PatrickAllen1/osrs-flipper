@@ -655,13 +655,17 @@ Data OUT: opportunities list, scan_time, cache_age"
 **Agent Task Completion Log:**
 ```
 TASK: FastAPI endpoints foundation
-FILES CREATED: osrs_flipper/server.py (95 LOC), tests/test_server.py (85 LOC)
+FILES CREATED: osrs_flipper/server/api.py (124 LOC), tests/server/test_api.py (111 LOC)
+FILES MODIFIED: requirements.txt (added fastapi, uvicorn, python-multipart)
 DATA FLOW IN: HTTP GET /api/opportunities?mode=X&min_roi=Y&limit=Z
 DATA FLOW OUT: {"opportunities": [...], "scan_time": float, "cache_age_seconds": float}
-ENDPOINTS: /api/health, /api/opportunities
-TESTS: 3 passing (health check, opportunities return, query params)
-DEPENDENCIES: ScannerService from Task 1
-NEXT TASK NEEDS: Background auto-scan thread to populate cache
+ENDPOINTS: /api/health, /api/status, /api/opportunities
+TESTS: 4 tests written (health check, status check, opportunities return, query params)
+TEST STATUS: RED phase complete (tests fail due to missing FastAPI installation)
+NOTE: FastAPI installation required: pip install fastapi "uvicorn[standard]" python-multipart
+DEPENDENCIES: ScannerService from Task 1 (already exists in osrs_flipper/server/scanner_service.py)
+NEXT TASK NEEDS: Install FastAPI dependencies, then tests will pass (GREEN phase)
+ACTUAL STRUCTURE: Used existing osrs_flipper/server/ subdirectory structure instead of flat file
 ```
 
 ---
