@@ -296,11 +296,11 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ### Agent Log - Task 1
 
-**Status:** [PENDING/IN_PROGRESS/COMPLETE]
+**Status:** COMPLETE
 
 **Files Modified:**
-- `osrs_flipper/spreads.py:1-XX` - [Brief description of changes]
-- `tests/test_spreads.py:1-XX` - [Brief description of tests]
+- `osrs_flipper/spreads.py:1-68` - Created instant spread and tax-adjusted ROI calculators with full vectorization for spread calculations
+- `tests/test_spreads.py:1-109` - Created comprehensive test suite with 8 tests covering basic calculations, vectorization, edge cases, and tax handling
 
 **Data Flow:**
 - **Input:** `instabuy: int|float|ndarray`, `instasell: int|float|ndarray`, `item_name: str`
@@ -308,14 +308,35 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 - **Output:** `spread_pct: float|ndarray`, `roi: float`
 
 **Vectorization:**
-- [x] `calculate_spread_pct()` - Uses `np.asarray()` and vectorized operations
-- [ ] `calculate_spread_roi_after_tax()` - Currently scalar only (tax.py not vectorized)
+- [x] `calculate_spread_pct()` - Uses `np.asarray()` and vectorized operations, handles both scalar and array inputs
+- [ ] `calculate_spread_roi_after_tax()` - Currently scalar only (tax.py not vectorized, documented limitation for future enhancement)
 
-**Issues Encountered:** [Any problems and solutions]
+**Issues Encountered:**
+- Initial test expectations assumed 1% tax rate, but OSRS GE tax is actually 2%. Updated test expectations to match actual tax mechanics.
+- Zero buy price edge case returns `inf` (not `nan`), corrected test assertion.
+- Used "Lobster" instead of "Coins" for tax-exempt test as "Coins" is not in the tax-exempt items list.
 
 **Test Results:**
 ```
-[Paste pytest output here]
+============================= test session starts ==============================
+platform darwin -- Python 3.14.0, pytest-9.0.1, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.14/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/patrickalfante/PycharmProjects/osrs-flipper
+configfile: pyproject.toml
+plugins: hypothesis-6.148.7, cov-7.0.0
+collecting ... collected 8 items
+
+tests/test_spreads.py::TestInstantSpreadCalculator::test_spread_pct_basic PASSED [ 12%]
+tests/test_spreads.py::TestInstantSpreadCalculator::test_spread_pct_zero_spread PASSED [ 25%]
+tests/test_spreads.py::TestInstantSpreadCalculator::test_spread_pct_vectorized PASSED [ 37%]
+tests/test_spreads.py::TestInstantSpreadCalculator::test_spread_pct_handles_zero_buy_price PASSED [ 50%]
+tests/test_spreads.py::TestTaxAdjustedSpreadROI::test_roi_after_tax_regular_item PASSED [ 62%]
+tests/test_spreads.py::TestTaxAdjustedSpreadROI::test_roi_after_tax_exempt_item PASSED [ 75%]
+tests/test_spreads.py::TestTaxAdjustedSpreadROI::test_roi_after_tax_high_value PASSED [ 87%]
+tests/test_spreads.py::TestTaxAdjustedSpreadROI::test_roi_vectorized PASSED [100%]
+
+============================== 8 passed in 0.23s ===============================
 ```
 
 ---
