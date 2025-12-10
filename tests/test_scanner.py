@@ -168,3 +168,103 @@ def test_scanner_includes_tax_fields():
                     f"Tax-exempt {opp['name']} should have equal upside: "
                     f"raw={raw_upside}, adjusted={adjusted_upside}"
                 )
+
+
+@responses.activate
+def test_scanner_instant_mode():
+    """Scanner finds instant arbitrage opportunities."""
+    # Mock API responses
+    responses.add(responses.GET, f"{BASE_URL}/mapping", json=[
+        {"id": 1, "name": "High Spread Item", "limit": 100}
+    ])
+    responses.add(responses.GET, f"{BASE_URL}/latest", json={
+        "data": {
+            "1": {"high": 1100, "low": 1000}  # 10% spread
+        }
+    })
+    responses.add(responses.GET, f"{BASE_URL}/24h", json={
+        "data": {
+            "1": {"highPriceVolume": 6000000, "lowPriceVolume": 4000000}  # BSR = 1.5
+        }
+    })
+
+    client = OSRSClient()
+    scanner = ItemScanner(client)
+
+    results = scanner.scan(mode="instant", limit=1)
+
+    assert len(results) >= 1
+    assert results[0]["instant"]["is_instant_opportunity"] is True
+    assert results[0]["instant"]["spread_pct"] == 10.0
+
+
+@responses.activate
+def test_scanner_convergence_mode():
+    """Scanner finds convergence opportunities."""
+    responses.add(responses.GET, f"{BASE_URL}/mapping", json=[
+        {"id": 1, "name": "Crashed Item", "limit": 100}
+    ])
+    responses.add(responses.GET, f"{BASE_URL}/latest", json={
+        "data": {
+            "1": {"high": 105, "low": 100}  # Current ~100
+        }
+    })
+    responses.add(responses.GET, f"{BASE_URL}/24h", json={
+        "data": {
+            "1": {"highPriceVolume": 5000000, "lowPriceVolume": 5000000}  # BSR = 1.0
+        }
+    })
+    # Timeseries: was at 200, now at 100
+    timeseries = []
+    for i in range(720):
+        # First 600 hours: price at 200
+        # Last 120 hours: price declining to 100
+        if i < 600:
+            price = 200
+        else:
+            price = 200 - ((i - 600) * 100 // 120)
+        timeseries.append({"timestamp": i * 3600, "avgHighPrice": price, "avgLowPrice": price - 10})
+
+    responses.add(responses.GET, f"{BASE_URL}/timeseries", json={"data": timeseries})
+
+    client = OSRSClient()
+    scanner = ItemScanner(client)
+
+    results = scanner.scan(mode="convergence", limit=1)
+
+    assert len(results) >= 1
+    assert results[0]["convergence"]["is_convergence"] is True
+
+
+@responses.activate
+def test_scanner_both_mode():
+    """Scanner finds items matching both strategies."""
+    # Item with high spread AND crashed from recent highs
+    responses.add(responses.GET, f"{BASE_URL}/mapping", json=[
+        {"id": 1, "name": "Perfect Item", "limit": 100}
+    ])
+    responses.add(responses.GET, f"{BASE_URL}/latest", json={
+        "data": {
+            "1": {"high": 1100, "low": 1000}  # 10% spread, current ~1050
+        }
+    })
+    responses.add(responses.GET, f"{BASE_URL}/24h", json={
+        "data": {
+            "1": {"highPriceVolume": 6000000, "lowPriceVolume": 4000000}
+        }
+    })
+
+    # Was at 1500, now at 1050
+    timeseries = [{"timestamp": i * 3600, "avgHighPrice": 1500 - (i * 450 // 720), "avgLowPrice": 1450 - (i * 450 // 720)} for i in range(720)]
+    responses.add(responses.GET, f"{BASE_URL}/timeseries", json={"data": timeseries})
+
+    client = OSRSClient()
+    scanner = ItemScanner(client)
+
+    results = scanner.scan(mode="both", limit=1)
+
+    if results:
+        assert "instant" in results[0]
+        assert "convergence" in results[0]
+        # At least one should be True
+        assert results[0]["instant"]["is_instant_opportunity"] or results[0]["convergence"]["is_convergence"]

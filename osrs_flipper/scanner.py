@@ -1,53 +1,14 @@
 """Item scanning service."""
-from typing import List, Dict, Any, Optional, Callable, Union
-import numpy as np
+from typing import List, Dict, Any, Optional, Callable
 from .api import OSRSClient
 from .analyzers import OversoldAnalyzer, OscillatorAnalyzer
+from .instant_analyzer import InstantSpreadAnalyzer
+from .convergence_analyzer import ConvergenceAnalyzer
+from .timeframes import fetch_timeframe_highs
+from .bsr import calculate_bsr
 from .exits import calculate_exit_strategies
 from .filters import passes_volume_filter
 from .tax import is_tax_exempt, calculate_ge_tax
-
-
-def calculate_bsr(
-    instabuy_vol: Union[int, float, np.ndarray],
-    instasell_vol: Union[int, float, np.ndarray],
-) -> Union[float, np.ndarray]:
-    """Calculate Buyer/Seller Ratio (BSR).
-
-    Args:
-        instabuy_vol: Volume of buyers (paying ask price)
-        instasell_vol: Volume of sellers (hitting bid price)
-
-    Returns:
-        BSR = instabuy_vol / instasell_vol
-        - BSR > 1.0: Buyers dominate (bullish)
-        - BSR = 1.0: Balanced
-        - BSR < 1.0: Sellers dominate (bearish)
-        - BSR = inf: Only buyers, no sellers
-        - BSR = 0.0: Only sellers or no volume
-
-    Examples:
-        >>> calculate_bsr(2000, 1000)
-        2.0
-        >>> calculate_bsr(np.array([1000, 2000]), np.array([1000, 1000]))
-        array([1., 2.])
-    """
-    # Vectorized calculation
-    instabuy = np.asarray(instabuy_vol, dtype=float)
-    instasell = np.asarray(instasell_vol, dtype=float)
-
-    # Avoid division by zero
-    with np.errstate(divide='ignore', invalid='ignore'):
-        bsr = instabuy / instasell
-
-    # Handle edge cases
-    # When instasell = 0 and instabuy > 0, result is inf (correct)
-    # When both = 0, result is nan, convert to 0.0
-    if np.isscalar(instabuy_vol):
-        return 0.0 if np.isnan(bsr) else float(bsr)
-    else:
-        bsr = np.where(np.isnan(bsr), 0.0, bsr)
-        return bsr
 
 
 class ItemScanner:
@@ -55,12 +16,16 @@ class ItemScanner:
 
     def __init__(self, client: OSRSClient):
         self.client = client
+        # Legacy analyzers
         self.oversold_analyzer = OversoldAnalyzer()
         self.oscillator_analyzer = OscillatorAnalyzer()
+        # New analyzers
+        self.instant_analyzer = InstantSpreadAnalyzer()
+        self.convergence_analyzer = ConvergenceAnalyzer()
 
     def scan(
         self,
-        mode: str = "all",
+        mode: str = "both",  # Changed default from "all"
         limit: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         lookback_days: int = 180,
@@ -69,10 +34,10 @@ class ItemScanner:
         """Scan for flip opportunities.
 
         Args:
-            mode: "oversold", "oscillator", or "all"
+            mode: "instant", "convergence", "both", "oversold", "oscillator", or "all"
             limit: Max items to scan (None for all)
             progress_callback: Optional callback(current, total) for progress updates
-            lookback_days: Days to look back for price range (default 180)
+            lookback_days: Days to look back (for legacy modes)
             min_roi: Minimum tax-adjusted ROI % to include (None for no filter)
 
         Returns:
@@ -94,9 +59,15 @@ class ItemScanner:
             if result:
                 # Apply min_roi filter
                 if min_roi is not None:
-                    tax_adjusted = result.get("tax_adjusted_upside_pct", 0)
-                    if tax_adjusted < min_roi:
+                    # Check instant ROI or convergence upside or legacy tax_adjusted_upside
+                    instant_roi = result.get("instant", {}).get("instant_roi_after_tax", 0)
+                    convergence_upside = result.get("convergence", {}).get("upside_pct", 0)
+                    legacy_roi = result.get("tax_adjusted_upside_pct", 0)
+
+                    max_roi = max(instant_roi, convergence_upside, legacy_roi)
+                    if max_roi < min_roi:
                         continue
+
                 opportunities.append(result)
 
         return opportunities
@@ -122,102 +93,119 @@ class ItemScanner:
         if not price_data:
             return None
 
-        high = price_data.get("high")
-        low = price_data.get("low")
-        if not high or not low:
+        # Use actual instant buy/sell prices (not midpoint)
+        instasell = price_data.get("high")
+        instabuy = price_data.get("low")
+        if not instasell or not instabuy:
             return None
 
-        current_price = (high + low) // 2
-        if current_price <= 0:
+        if instabuy <= 0 or instasell <= 0:
             return None
 
         vol_data = volumes.get(str(item_id), {})
-        instabuy_vol = vol_data.get("highPriceVolume", 0) or 0  # buyers paying ask
-        instasell_vol = vol_data.get("lowPriceVolume", 0) or 0  # sellers hitting bid
+        instabuy_vol = vol_data.get("highPriceVolume", 0) or 0
+        instasell_vol = vol_data.get("lowPriceVolume", 0) or 0
         daily_volume = instabuy_vol + instasell_vol
 
-        buyer_momentum = calculate_bsr(instabuy_vol, instasell_vol)
+        bsr = calculate_bsr(instabuy_vol, instasell_vol)
 
-        if not passes_volume_filter(current_price, daily_volume):
-            return None
-
-        try:
-            history = self.client.fetch_timeseries(item_id)
-        except Exception:
-            return None
-
-        if len(history) < 30:
-            return None
-
-        prices = []
-        for point in history:
-            h = point.get("avgHighPrice")
-            l = point.get("avgLowPrice")
-            if h and l:
-                prices.append((h + l) // 2)
-
-        if len(prices) < 30:
+        if not passes_volume_filter(instabuy, daily_volume):
             return None
 
         result = {
             "item_id": item_id,
             "name": name,
-            "current_price": current_price,
+            "instabuy": instabuy,
+            "instasell": instasell,
             "daily_volume": daily_volume,
             "instabuy_vol": instabuy_vol,
             "instasell_vol": instasell_vol,
-            "buyer_momentum": round(buyer_momentum, 2) if buyer_momentum != float("inf") else 99.9,
+            "bsr": round(bsr, 2) if bsr != float("inf") else 99.9,
             "buy_limit": item.get("limit"),
             "is_tax_exempt": is_tax_exempt(name),
         }
 
-        if mode in ("oversold", "all"):
-            oversold = self.oversold_analyzer.analyze(
-                current_price=current_price,
-                prices=prices,
-                lookback_days=lookback_days,
-            )
-            result["oversold"] = oversold
-
-        if mode in ("oscillator", "all"):
-            oscillator = self.oscillator_analyzer.analyze(prices, current_price)
-            result["oscillator"] = oscillator
-
         is_opportunity = False
-        if mode == "oversold" and result.get("oversold", {}).get("is_oversold"):
-            is_opportunity = True
-        elif mode == "oscillator" and result.get("oscillator", {}).get("is_oscillator"):
-            is_opportunity = True
-        elif mode == "all":
-            is_opportunity = (result.get("oversold", {}).get("is_oversold") or result.get("oscillator", {}).get("is_oscillator"))
 
-        if is_opportunity:
-            # Add exit strategies
-            result["exits"] = calculate_exit_strategies(current_price, prices)
+        # New modes: instant, convergence, both
+        if mode in ("instant", "both"):
+            instant_result = self.instant_analyzer.analyze(
+                instabuy=instabuy,
+                instasell=instasell,
+                instabuy_vol=instabuy_vol,
+                instasell_vol=instasell_vol,
+                item_name=name,
+            )
+            result["instant"] = instant_result
+            if instant_result["is_instant_opportunity"]:
+                is_opportunity = True
 
-            # Calculate tax-adjusted upside if exits are available
-            if result.get("exits"):
-                target_price = result["exits"].get("target", {}).get("price", 0)
-                if target_price > 0:
-                    # Calculate tax on the target sell price
-                    tax = calculate_ge_tax(target_price, name)
-                    # Tax-adjusted profit = target_price - tax - current_price
-                    tax_adjusted_profit = target_price - tax - current_price
-                    # Tax-adjusted upside percentage
-                    tax_adjusted_upside = (tax_adjusted_profit / current_price) * 100 if current_price > 0 else 0
-                    result["tax_adjusted_upside_pct"] = round(tax_adjusted_upside, 2)
+        if mode in ("convergence", "both"):
+            # Fetch multi-timeframe highs
+            timeframe_highs = fetch_timeframe_highs(self.client, item_id, instabuy)
 
-            # Estimate hold time based on volume turnover
-            # Higher volume = faster fills = shorter hold
-            buy_limit = item.get("limit") or 1
-            if daily_volume > 0:
-                # Days to fill buy limit based on daily volume
-                days_to_fill = max(1, buy_limit / (daily_volume / 2))  # Assume we get half the volume
-                # Add time for price to recover (based on how oversold)
-                percentile = result.get("oversold", {}).get("percentile", 50)
-                recovery_factor = max(1, (50 - percentile) / 10)  # More oversold = longer recovery
-                result["expected_hold_days"] = round(days_to_fill + recovery_factor, 1)
-            else:
-                result["expected_hold_days"] = 14  # Default for low volume
+            convergence_result = self.convergence_analyzer.analyze(
+                current_instabuy=instabuy,
+                one_day_high=timeframe_highs["1d_high"],
+                one_week_high=timeframe_highs["1w_high"],
+                one_month_high=timeframe_highs["1m_high"],
+                bsr=bsr,
+            )
+            result["convergence"] = convergence_result
+            if convergence_result["is_convergence"]:
+                is_opportunity = True
+
+        # Legacy modes (oversold, oscillator, all)
+        if mode in ("oversold", "oscillator", "all"):
+            try:
+                history = self.client.fetch_timeseries(item_id)
+            except Exception:
+                return None
+
+            if len(history) < 30:
+                return None
+
+            prices = []
+            for point in history:
+                h = point.get("avgHighPrice")
+                l = point.get("avgLowPrice")
+                if h and l:
+                    prices.append((h + l) // 2)
+
+            if len(prices) < 30:
+                return None
+
+            current_price = (instasell + instabuy) // 2
+
+            if mode in ("oversold", "all"):
+                oversold = self.oversold_analyzer.analyze(
+                    current_price=current_price,
+                    prices=prices,
+                    lookback_days=lookback_days,
+                )
+                result["oversold"] = oversold
+
+            if mode in ("oscillator", "all"):
+                oscillator = self.oscillator_analyzer.analyze(prices, current_price)
+                result["oscillator"] = oscillator
+
+            # Check legacy opportunity criteria
+            if mode == "oversold" and result.get("oversold", {}).get("is_oversold"):
+                is_opportunity = True
+            elif mode == "oscillator" and result.get("oscillator", {}).get("is_oscillator"):
+                is_opportunity = True
+            elif mode == "all":
+                is_opportunity = (result.get("oversold", {}).get("is_oversold") or result.get("oscillator", {}).get("is_oscillator"))
+
+            # Add legacy exit strategies if opportunity
+            if is_opportunity and mode in ("oversold", "oscillator", "all"):
+                result["exits"] = calculate_exit_strategies(current_price, prices)
+                if result.get("exits"):
+                    target_price = result["exits"].get("target", {}).get("price", 0)
+                    if target_price > 0:
+                        tax = calculate_ge_tax(target_price, name)
+                        tax_adjusted_profit = target_price - tax - current_price
+                        tax_adjusted_upside = (tax_adjusted_profit / current_price) * 100 if current_price > 0 else 0
+                        result["tax_adjusted_upside_pct"] = round(tax_adjusted_upside, 2)
 
         return result if is_opportunity else None

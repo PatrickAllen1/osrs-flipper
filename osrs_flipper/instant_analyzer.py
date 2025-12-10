@@ -2,7 +2,7 @@
 """Instant spread arbitrage opportunity analyzer."""
 from typing import Dict, Any
 from .spreads import calculate_spread_pct, calculate_spread_roi_after_tax
-from .scanner import calculate_bsr
+from .bsr import calculate_bsr
 
 
 class InstantSpreadAnalyzer:
