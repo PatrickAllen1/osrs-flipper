@@ -27,9 +27,9 @@ def main():
 @main.command()
 @click.option(
     "--mode",
-    type=click.Choice(["oversold", "oscillator", "all"]),
-    default="all",
-    help="Scan mode: oversold, oscillator, or all",
+    type=click.Choice(["instant", "convergence", "both", "oversold", "oscillator", "all"]),
+    default="both",
+    help="Scanning mode: instant (same-day arbitrage), convergence (crash recovery), both (default), or legacy modes",
 )
 @click.option(
     "--cash",
@@ -85,7 +85,14 @@ def main():
     help="Minimum tax-adjusted ROI % to include (default: 20)",
 )
 def scan(mode, cash, slots, rotations, strategy, export, output_dir, limit, hold_days, min_roi):
-    """Scan for flip opportunities."""
+    """Scan for flip opportunities.
+
+    Modes:
+    - instant: High spread arbitrage opportunities (same-day flips)
+    - convergence: Items crashed from recent highs (1-7 day recovery)
+    - both: Find items matching either strategy (recommended)
+    - oversold/oscillator/all: Legacy long-term strategies
+    """
     click.echo(f"OSRS Flip Scanner - {mode.upper()} mode")
     click.echo("=" * 60)
 

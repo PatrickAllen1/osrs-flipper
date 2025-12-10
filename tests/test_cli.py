@@ -60,3 +60,28 @@ def test_portfolio_optimize_option():
     assert result.exit_code == 0
     assert "--optimize" in result.output
     assert "--sims" in result.output
+
+
+def test_scan_instant_mode():
+    """CLI supports --mode instant."""
+    runner = CliRunner()
+    result = runner.invoke(scan, ["--mode", "instant", "--limit", "1"])
+
+    # Should not error on mode
+    assert "Invalid value for '--mode'" not in result.output
+
+
+def test_scan_convergence_mode():
+    """CLI supports --mode convergence."""
+    runner = CliRunner()
+    result = runner.invoke(scan, ["--mode", "convergence", "--limit", "1"])
+
+    assert "Invalid value for '--mode'" not in result.output
+
+
+def test_scan_both_mode():
+    """CLI supports --mode both."""
+    runner = CliRunner()
+    result = runner.invoke(scan, ["--mode", "both", "--limit", "1"])
+
+    assert "Invalid value for '--mode'" not in result.output
