@@ -67,7 +67,7 @@ class ScannerService:
 
         if self._is_cache_valid():
             logger.info(f"Cache hit (age: {self.get_cache_age():.1f}s)")
-            return self.cached_opportunities
+            return self._filter_cached(mode, min_roi, limit)
 
         logger.info("Cache miss - scanning")
         return self._scan_fresh(mode, min_roi, limit)
@@ -131,3 +131,93 @@ class ScannerService:
         logger.info(f"Scanned {limit} items, found {len(opportunities)} opportunities")
 
         return opportunities
+
+    def _filter_cached(
+        self,
+        mode: str,
+        min_roi: float,
+        limit: int
+    ) -> List[Dict[str, Any]]:
+        """Filter cached opportunities by mode and min_roi.
+
+        Args:
+            mode: Desired mode filter (instant/convergence/both/oversold/oscillator/all)
+            min_roi: Min ROI threshold
+            limit: Max results
+
+        Returns:
+            Filtered cached opportunities
+
+        Data Flow:
+            IN: cached_opportunities (List[Dict]), mode, min_roi, limit
+            FILTER MODE:
+                - instant: has "instant" key
+                - convergence: has "convergence" key
+                - both: has "instant" OR "convergence"
+                - oversold/oscillator/all: has "oversold" OR "oscillator"
+            FILTER ROI: max(instant_roi, conv_upside, legacy_upside) >= min_roi
+            LIMIT: [:limit]
+            OUT: filtered List[Dict]
+        """
+        filtered = []
+
+        for opp in self.cached_opportunities:
+            # Filter by mode
+            if not self._matches_mode(opp, mode):
+                continue
+
+            # Filter by min ROI
+            if not self._meets_min_roi(opp, min_roi):
+                continue
+
+            filtered.append(opp)
+
+            # Apply limit
+            if len(filtered) >= limit:
+                break
+
+        return filtered
+
+    def _matches_mode(self, opp: Dict[str, Any], mode: str) -> bool:
+        """Check if opportunity matches requested mode.
+
+        Args:
+            opp: Opportunity dict
+            mode: Requested mode
+
+        Returns:
+            True if matches mode
+        """
+        if mode == "instant":
+            return "instant" in opp
+        elif mode == "convergence":
+            return "convergence" in opp
+        elif mode == "both":
+            return "instant" in opp or "convergence" in opp
+        elif mode == "oversold":
+            return "oversold" in opp
+        elif mode == "oscillator":
+            return "oscillator" in opp
+        elif mode == "all":
+            return "oversold" in opp or "oscillator" in opp
+
+        return False
+
+    def _meets_min_roi(self, opp: Dict[str, Any], min_roi: float) -> bool:
+        """Check if opportunity meets min ROI threshold.
+
+        Args:
+            opp: Opportunity dict
+            min_roi: Minimum ROI %
+
+        Returns:
+            True if meets threshold
+        """
+        # Extract best ROI from available data
+        instant_roi = opp.get("instant", {}).get("instant_roi_after_tax", 0.0)
+        conv_upside = opp.get("convergence", {}).get("upside_pct", 0.0)
+        legacy_upside = opp.get("tax_adjusted_upside_pct", 0.0)
+
+        best_roi = max(instant_roi, conv_upside, legacy_upside)
+
+        return best_roi >= min_roi
